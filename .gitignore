@@ -1,0 +1,8 @@
+# React Native
+node_modules/
+android/build/
+android/.gradle/
+ios/build/
+
+# Env files
+.env
