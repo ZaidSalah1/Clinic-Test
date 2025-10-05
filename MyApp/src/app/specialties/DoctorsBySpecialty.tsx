@@ -8,8 +8,11 @@ import {
   TextInput,
   Pressable,
   Image,
+  StatusBar,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -39,6 +42,7 @@ const BRAND = '#128FAF';
 const PILL_BG = '#F2F5F7';
 
 export default function DoctorsBySpecialty() {
+  const insets = useSafeAreaInsets();
   const { params } = useRoute<DoctorsBySpecRoute>();
   const specName = params?.name ?? 'Doctors';
   const navigation = useNavigation();
@@ -87,10 +91,16 @@ export default function DoctorsBySpecialty() {
 
   return (
     
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['top', 'left', 'right']}>
+    <SafeAreaProvider style={{ flex: 1, backgroundColor: '#fff' }} edges={['top', 'left', 'right']}>
       {/* Header */}
-      
+      <View style={{ height: insets.top, backgroundColor: BRAND }} />
       <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
+       <StatusBar
+        backgroundColor={BRAND} 
+        barStyle="light-content"  // أبيض
+        translucent={false}
+      />
+       
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Pressable
             onPress={() => navigation.goBack()}
@@ -196,13 +206,13 @@ export default function DoctorsBySpecialty() {
               doctor={item}
               host={HOST}
               onPress={() => {
-                // navigation.navigate('DoctorDetails', { id: item._id });
+                navigation.navigate('DoctorDetails', { id: item._id });
               }}
             />
           )}
         />
       )}
-    </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 

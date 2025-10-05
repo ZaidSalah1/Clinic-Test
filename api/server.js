@@ -94,6 +94,28 @@ app.get("/allSpecialties", async (req, res) => {
   }
 });
 
+app.get("/getAllDoctors", async (req, res) => {
+  try {
+    const doctors = await Doctor.find({}).populate(
+      "specialtyId",
+      "name iconUrl"
+    ); // برجع اسم/أيقونة التخصص
+    res.json({ ok: true, count: doctors.length, doctors });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get("/get6Doctors", async (req, res) => {
+  try {
+    const doctors = await Doctor.find({})
+      .populate("specialtyId", "name iconUrl") // برجع اسم/أيقونة التخصص
+      .limit(6);
+    res.json({ ok: true, count: doctors.length, doctors });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 app.post("/doctor", async (req, res) => {
   try {
@@ -140,19 +162,21 @@ app.post("/doctor", async (req, res) => {
   }
 });
 
-app.get('/doctor/:id', async (req, res) => {
+app.get("/doctor/:id", async (req, res) => {
   try {
-    const doc = await Doctor.findById(req.params.id)
-      .populate('specialtyId', 'name iconUrl'); // عشان يرجع اسم التخصص
-    if (!doc) return res.status(404).json({ ok:false, error:'Not found' });
-    res.json({ ok:true, doctor: doc });
+    const doc = await Doctor.findById(req.params.id).populate(
+      "specialtyId",
+      "name iconUrl"
+    ); // عشان يرجع اسم التخصص
+    if (!doc) return res.status(404).json({ ok: false, error: "Not found" });
+    res.json({ ok: true, doctor: doc });
   } catch (e) {
-    res.status(400).json({ ok:false, error:e.message });
+    res.status(400).json({ ok: false, error: e.message });
   }
 });
 
 // GET /doctors?spec=Cardiology
-app.get('/doctors', async (req, res) => {
+app.get("/doctors", async (req, res) => {
   try {
     const { spec } = req.query; // ← اسم التخصص جاي من الـ query
     const filter = {};
@@ -160,7 +184,7 @@ app.get('/doctors', async (req, res) => {
     if (spec) {
       // دور على التخصص بالاسم (case-insensitive)
       const specialty = await Specialty.findOne({
-        name: new RegExp(`^${spec}$`, 'i')
+        name: new RegExp(`^${spec}$`, "i"),
       });
       if (!specialty) {
         return res.json({ ok: true, total: 0, items: [] });
@@ -170,7 +194,7 @@ app.get('/doctors', async (req, res) => {
 
     // رجع كل الدكاترة لهذا التخصص
     const doctors = await Doctor.find(filter)
-      .populate('specialtyId', 'name iconUrl')
+      .populate("specialtyId", "name iconUrl")
       .sort({ createdAt: -1 });
 
     res.json({ ok: true, total: doctors.length, items: doctors });
@@ -178,8 +202,6 @@ app.get('/doctors', async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-
-
 
 // كل الدكاترة
 // app.get("/doctors", async (req, res) => {

@@ -7,7 +7,7 @@ import Ionicons     from 'react-native-vector-icons/Ionicons';
 
 export default function HeaderCard({
   name = "Zaid Salah",
-  avatar = "https://i.pravatar.cc/120",
+  avatar = "https://img.freepik.com/free-photo/portrait-white-man-isolated_53876-40306.jpg?semt=ais_hybrid&w=740&q=80",
   onPressLang,
   onPressBell,
   hasNotification = true,
