@@ -21,6 +21,8 @@ import { useNavigation } from '@react-navigation/native';
 import DoctorsBySpecialty from './specialties/DoctorsBySpecialty';
 import Specialties from './specialties/Specialties';
 import DoctorDetails from './DoctorDetails';
+import BookingScreen from './BookingScreen';
+
 
 type Specialty = { _id: string; name: string; iconUrl?: string };
 const BRAND = '#13809D';
@@ -31,6 +33,7 @@ export type RootStackParamList = {
   Specialties: undefined;
   DoctorsBySpecialty: { name: string };
   DoctorDetails: { id: string };
+  Booking: { doctorId: string };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -52,6 +55,8 @@ export default function App() {
             component={DoctorsBySpecialty}
           />
           <Stack.Screen name="DoctorDetails" component={DoctorDetails} />
+          <Stack.Screen name="Booking" component={BookingScreen} />
+
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

@@ -166,13 +166,13 @@ export default function DoctorDetails() {
               icon="laptop-outline"
               title="Virtual"
               price={`${vPrice}₪`}
-              onBook={() => {}}
+              onBook={() => navigation.navigate('Booking', { doctorId: doctor._id })}
             />
             <PriceCard
               icon="people-outline"
               title="In-Person"
               price={`${iPrice}₪`}
-              onBook={() => {}}
+              onBook={() => navigation.navigate('Booking', { doctorId: doctor._id })}
             />
           </View>
         </ScrollView>

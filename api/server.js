@@ -8,8 +8,10 @@ const path = require("path");
 const app = express();
 
 const Doctor = require("./models/Doctor.js");
-const Appointment = require("./models/Appointment");
+const Appointment = require("./models/Appointment.js");
 const Specialty = require("./models/specialty");
+
+const { DateTime } = require('luxon');
 
 const { PORT = 4000, MONGO_URI } = process.env;
 
@@ -20,6 +22,9 @@ app.use(express.json());
 app.get("/", (_req, res) => res.json({ ok: true }));
 const UPLOADS_DIR = path.resolve(__dirname, "../uploads"); // <-- المهم
 app.use("/uploads", express.static(UPLOADS_DIR));
+
+
+
 
 app.post("/reset", async (_req, res) => {
   try {
@@ -203,296 +208,102 @@ app.get("/doctors", async (req, res) => {
   }
 });
 
-// كل الدكاترة
-// app.get("/doctors", async (req, res) => {
-//   try {
-//     const docs = await Doctor.find().sort({ createdAt: -1 });
+// 🕒 تحويل وقت نصي "HH:mm" إلى عدد دقائق من بداية اليوم
+function hhmmToMinutes(timeString) {
+  const [hours, minutes] = timeString.split(':').map(Number);
+  const totalMinutes = (hours * 60) + minutes;
+  return totalMinutes;
+}
 
-//     const origin = `${req.protocol}://${req.get("host")}`;
-//     const withFullUrls = docs.map((d) => ({
-//       ...d.toObject(),
-//       photoUrl: d.photoUrl?.startsWith("/uploads")
-//         ? origin + d.photoUrl // يرجّع URL كامل
-//         : d.photoUrl,
-//     }));
+// ⏰ تحويل عدد دقائق إلى وقت نصي "HH:mm"
+function minutesToHHMM(totalMinutes) {
+  const hours = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
+  const minutes = String(totalMinutes % 60).padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
 
-//     res.json(withFullUrls);
-//   } catch (e) {
-//     res.status(500).json({ error: e.message });
-//   }
-// });
+// 📅 تحديد فترة العمل (start/end) للطبيب في اليوم المحدد
+function getWorkingWindowForDate(doctor, dateString) {
+  // المنطقة الزمنية للطبيب
+  const timezone = doctor.timezone || 'UTC';
 
-// إضافة دكتور جديد (مع رابط صورة)
-// app.post("/doctors", async (req, res) => {
-//   try {
-//     const { name, specialty, photoUrl, price, rating, bio } = req.body;
-//     if (!name?.trim() || !specialty?.trim() || !photoUrl?.trim()) {
-//       return res
-//         .status(400)
-//         .json({ error: "name, specialty, photoUrl مطلوبة" });
-//     }
-//     const d = await Doctor.create({
-//       name: name.trim(),
-//       specialty: specialty.trim(),
-//       photoUrl: photoUrl.trim(),
-//       price: Number(price) || 0,
-//       rating: Number(rating) || 4.5,
-//       bio: bio || "",
-//     });
-//     res.status(201).json(d);
-//   } catch (err) {
-//     res.status(500).json({ error: e.message });
-//   }
-// });
+  // تحويل التاريخ إلى كائن DateTime من luxon
+  const dateObject = DateTime.fromISO(dateString, { zone: timezone });
 
-// // seed سريع (بيانات جاهزة + صور)
-// app.post("/seed-doctors", async (_req, res) => {
-//   try {
-//     await Doctor.deleteMany({});
-//     const data = await Doctor.insertMany([
-//       {
-//         name: "Dr. Lina Al-Sabbagh",
-//         specialty: "Emergency",
-//         photoUrl: "/uploads/dr2.png",
-//         price: 65,
-//         rating: 4.5,
-//         bio: "أخصائية طوارئ بخبرة في إنعاش الحالات الحرجة.",
-//       },
-//       {
-//         name: "Dr. Samer Al-Masri",
-//         specialty: "Endocrinology",
-//         photoUrl: "/uploads/dr4.png",
-//         price: 80,
-//         rating: 4.6,
-//         bio: "متخصص في الغدد الصماء والهرمونات وعلاج السكري.",
-//       },
-//       {
-//         name: "Dr. Reem Al-Khatib",
-//         specialty: "Family Medicine",
-//         photoUrl: "/uploads/dr3.png",
-//         price: 55,
-//         rating: 4.4,
-//         bio: "طبيبة أسرة تهتم بالرعاية الأولية والوقاية.",
-//       },
-//       {
-//         name: "Dr. Hani Odeh",
-//         specialty: "Neurosurgery",
-//         photoUrl: "/uploads/dr5.png",
-//         price: 150,
-//         rating: 4.9,
-//         bio: "جراح أعصاب متخصص في أورام الدماغ والعمود الفقري.",
-//       },
-//       {
-//         name: "Dr. Ruba Awad",
-//         specialty: "Obstetric",
-//         photoUrl: "/uploads/dr13.png",
-//         price: 95,
-//         rating: 4.7,
-//         bio: "أخصائية نسائية وتوليد بخبرة متابعة الحمل والولادة.",
-//       },
-//       {
-//         name: "Dr. Fadi Suleiman",
-//         specialty: "Ophthalmology",
-//         photoUrl: "/uploads/dr12.png",
-//         price: 75,
-//         rating: 4.6,
-//         bio: "طبيب عيون مختص بجراحة القرنية والليزر.",
-//       },
-//       {
-//         name: "Dr. Maha Jaber",
-//         specialty: "Orthopedic",
-//         photoUrl: "/uploads/dr11.png",
-//         price: 85,
-//         rating: 4.5,
-//         bio: "أخصائية عظام تعالج الكسور وإصابات الملاعب.",
-//       },
-//       {
-//         name: "Dr. Tareq Qudsi",
-//         specialty: "Otolaryngology",
-//         photoUrl: "/uploads/dr8.png",
-//         price: 70,
-//         rating: 4.6,
-//         bio: "اختصاصي أنف وأذن وحنجرة يعالج التهابات واضطرابات السمع.",
-//       },
-//       {
-//         name: "Dr. Nour Al-Rashid",
-//         specialty: "Physiotherapist",
-//         photoUrl: "/uploads/dr3.png",
-//         price: 50,
-//         rating: 4.4,
-//         bio: "معالجة فيزيائية متخصصة في إعادة التأهيل بعد الإصابات.",
-//       },
-//       {
-//         name: "Dr. Karim Mansour",
-//         specialty: "Plastic",
-//         photoUrl: "/uploads/dr10.png",
-//         price: 200,
-//         rating: 4.8,
-//         bio: "جراح تجميل وترميم بخبرة في عمليات التجميل الدقيقة.",
-//       },
-//       {
-//         name: "Dr. Amani Hamdan",
-//         specialty: "Psychiatry",
-//         photoUrl: "/uploads/dr11.png",
-//         price: 110,
-//         rating: 4.7,
-//         bio: "طبيبة نفسية متخصصة في علاج الاكتئاب والقلق.",
-//       },
-//       {
-//         name: "Dr. Basel Najjar",
-//         specialty: "Psychology",
-//         photoUrl: "/uploads/dr12.png",
-//         price: 65,
-//         rating: 4.3,
-//         bio: "أخصائي نفسي يقدم جلسات علاج سلوكي معرفي.",
-//       },
-//       {
-//         name: "Dr. Dalia Haroun",
-//         specialty: "Pulmonary",
-//         photoUrl: "/uploads/dr13.png",
-//         price: 90,
-//         rating: 4.6,
-//         bio: "أخصائية صدرية تعالج الربو وأمراض الرئة المزمنة.",
-//       },
-//       {
-//         name: "Dr. Yazan Qasem",
-//         specialty: "Rheumatology",
-//         photoUrl: "/uploads/dr7.png",
-//         price: 95,
-//         rating: 4.5,
-//         bio: "طبيب مفاصل يعالج الروماتيزم والتهابات المفاصل.",
-//       },
-//       {
-//         name: "Dr. Hana Tannous",
-//         specialty: "Urology",
-//         photoUrl: "/uploads/dr1.png",
-//         price: 85,
-//         rating: 4.4,
-//         bio: "أخصائية مسالك بولية وجراحة بسيطة للكلى والمثانة.",
-//       },
-//       {
-//         name: "Dr. Ziad Shami",
-//         specialty: "Vascular",
-//         photoUrl: "/uploads/dr5.png",
-//         price: 120,
-//         rating: 4.7,
-//         bio: "جراح أوعية دموية متخصص في القسطرة والدوالي.",
-//       },
-//     ]);
-//     res.json({ inserted: data.length, data });
-//   } catch (e) {
-//     res.status(500).json({ error: e.message });
-//   }
-// });
+  // تحديد اليوم من الأسبوع: sun → 0, mon → 1, ...
+  const weekdayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const weekdayKey = weekdayKeys[dateObject.weekday % 7];
 
-// app.get("/appointments/:userId", async (req, res) => {
-//   try {
-//     const { userId } = req.params;
+  // جلب فترة الدوام لهذا اليوم من doctor.workingHours
+  const daySchedule = doctor.workingHours?.[weekdayKey];
 
-//     // لو userId مخزّن ObjectId (مش نص):
-//     // const list = await Appointment.find({ user: new mongoose.Types.ObjectId(userId) })
-//     //   .sort({ createdAt: -1 });
+  // لو ما في دوام أو اليوم معطل → رجّع null
+  if (!daySchedule || !daySchedule.enabled) {
+    return null;
+  }
 
-//     // لو مخزّن كـ نص (زي ما عملنا مؤقتاً بـ userId: "user1"):
-//     const list = await Appointment.find({ userId }).sort({ createdAt: -1 });
+  // رجّع start و end لهذا اليوم
+  return {
+    startTime: daySchedule.startTime,
+    endTime: daySchedule.endTime,
+  };
+}
 
-//     res.json(list);
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
+// 🧭 توليد الفترات الزمنية المتاحة للحجز
+function generateSlots(doctor, dateString) {
+  // طول كل فترة (مثلاً 30 دقيقة)
+  const slotDuration = doctor.slotMinutes || 30;
+  const timezone = doctor.timezone || 'UTC';
 
-// app.post("/seed-appointments", async (req, res) => {
-//   await Specialty.deleteMany({});
-//   const data = await Appointment.insertMany([
-//     {
-//       userId: "user1",
-//       doctorName: "Dr. Ahmad Barakat",
-//       specialty: "Cardiology",
-//       photoUrl: "/uploads/dr1.png",
-//       date: "2025-09-20 10:00 AM",
-//       notes: "مراجعة قلب",
-//     },
-//     {
-//       userId: "user1",
-//       doctorName: "Dr. Rania Khalid",
-//       specialty: "Dermatology",
-//       photoUrl: "/uploads/dr2.png",
-//       date: "2025-09-21 02:00 PM",
-//       notes: "جلسة ليزر",
-//     },
-//   ]);
+  // جلب فترة دوام الطبيب لليوم
+  const workingWindow = getWorkingWindowForDate(doctor, dateString);
+  if (!workingWindow) return [];
 
-//   res.json(data);
-// });
+  // تحويل وقت البداية والنهاية إلى دقائق
+  const startInMinutes = hhmmToMinutes(workingWindow.startTime);
+  const endInMinutes = hhmmToMinutes(workingWindow.endTime);
 
-// app.get("/specialties", async (req, res) => {
-//   try {
-//     const data = await Specialty.find().limit(6);
-//     res.json(data);
-//   } catch (err) {
-//     console.log(err);
-//     res.status(500).json({ error: err.message });
-//   }
-// });
+  const availableSlots = [];
 
-// app.get("/allSpecialties", async (req, res) => {
-//   try {
-//     const data = await Specialty.find();
-//     res.json(data);
-//   } catch (err) {
-//     console.log(err);
-//     res.status(500).json({ error: err.message });
-//   }
-// });
+  // Loop من وقت البداية للنهاية بفاصل slotDuration
+  for (let currentMinute = startInMinutes; currentMinute + slotDuration <= endInMinutes; currentMinute += slotDuration) {
+    // تحويل الدقائق إلى وقت محلي بالتاريخ المحدد
+    const localStartTime = DateTime.fromISO(
+      `${dateString}T${minutesToHHMM(currentMinute)}`,
+      { zone: timezone }
+    );
 
-// app.post("/add-Specialty", async (req, res) => {
-//   try {
-//     await Specialty.deleteMany({});
-//     const data = await Specialty.insertMany([
-//       { name: "Cardiology", iconUrl: "/uploads/icons/Cardiology-icon.png" },
-//       { name: "Emergency", iconUrl: "/uploads/icons/Emergency-icon.png" },
-//       {
-//         name: "Endocrinology",
-//         iconUrl: "/uploads/icons/Endocrinology-icon.png",
-//       },
-//       {
-//         name: "Family Medicine",
-//         iconUrl: "/uploads/icons/family-medicine-icon.png",
-//       },
-//       { name: "Neurosurgery", iconUrl: "/uploads/icons/Neurosurgery-icon.png" },
-//       { name: "Obstetric", iconUrl: "/uploads/icons/Obstetric-icon.png" },
-//       {
-//         name: "Ophthalmology",
-//         iconUrl: "/uploads/icons/Ophthalmology-icon.png",
-//       },
-//       { name: "Orthopedic", iconUrl: "/uploads/icons/Orthopedic-icon.png" },
-//       {
-//         name: "Otolaryngology",
-//         iconUrl: "/uploads/icons/Otolaryngology-icon.png",
-//       },
-//       { name: "Pediatrics", iconUrl: "/uploads/icons/Pediatrics-icon.png" },
-//       {
-//         name: "Physiotherapist",
-//         iconUrl: "/uploads/icons/Physiotherapist-icon.png",
-//       },
-//       { name: "Plastic", iconUrl: "/uploads/icons/Plastic-icon.png" },
-//       { name: "Psychiatry", iconUrl: "/uploads/icons/Psychiatry-icon.png" },
-//       { name: "Psychology", iconUrl: "/uploads/icons/Psychology-icon.png" },
-//       { name: "Pulmonary", iconUrl: "/uploads/icons/Pulmonary-icon.png" },
-//       { name: "Rheumatology", iconUrl: "/uploads/icons/Rheumatology-icon.png" },
-//       { name: "Urology", iconUrl: "/uploads/icons/Urology-icon.png" },
-//       { name: "Vascular", iconUrl: "/uploads/icons/Vascular-icon.png" },
-//     ]);
+    availableSlots.push({
+      label: localStartTime.toFormat('hh:mm a'),  // مثل "09:00 AM"
+      utc: localStartTime.toUTC().toISO(),        // وقت UTC للتخزين
+    });
+  }
 
-//     res.json(data);
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ error: err.message });
-//   }
-// });
+  return availableSlots;
+}
 
-// تشغيل + اتصال
+// 🌐 Endpoint لاستخراج المواعيد المتاحة للطبيب حسب التاريخ
+app.get('/doctors/:id/availability', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { date } = req.query;
+
+    if (!date) {
+      return res.status(400).json({ error: 'date is required' });
+    }
+
+    const doctor = await Doctor.findById(id).lean();
+    if (!doctor) {
+      return res.status(404).json({ error: 'doctor not found' });
+    }
+
+    const slots = generateSlots(doctor, date);
+    res.json({ date, slots });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 app.listen(PORT, () => {
   console.log(`🚀 API http://localhost:${PORT}`);

@@ -95,6 +95,7 @@ export default function DoctorsBySpecialty() {
       {/* Header */}
       <View style={{ height: insets.top, backgroundColor: BRAND }} />
       <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
+     
        <StatusBar
         backgroundColor={BRAND} 
         barStyle="light-content"  // أبيض
