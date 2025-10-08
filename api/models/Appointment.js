@@ -1,31 +1,31 @@
-// models/Appointment.js
 const mongoose = require('mongoose');
 
 const paymentSchema = new mongoose.Schema({
   provider:         { type: String, default: 'lahza' },
   currency:         { type: String, default: 'ILS' },
-  amountMinor:      { type: Number, required: true }, // بالأغورة
+  amount_agorot:    { type: Number, required: true },
   reference:        { type: String },
   authorizationUrl: { type: String },
-  status: {
-    type: String,
-    enum: ['pending', 'success', 'failed', 'abandoned'],
-    default: 'pending',
-  },
-  rawVerify: { type: Object },
-}, { _id: false });
+  callbackUrl:      { type: String },
+  status: { type: String, enum: ['pending','success','failed','canceled'], default: 'pending' },
+  channel:          { type: String },
+  gatewayResponse:  { type: String },
+  rawVerify:        {},
+  rawWebhook:       {},
+}, { _id:false });
 
 const appointmentSchema = new mongoose.Schema({
-  doctorId:  { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', required: true, index: true },
-  patientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-  date:      { type: String, required: true },  // "YYYY-MM-DD"
-  slotUTC:   { type: String, required: true },  // ISO UTC
-  slotLabel: { type: String, required: true },  // "10:30 AM"
-  timezone:  { type: String, default: 'Asia/Jerusalem' },
-  priceILS:  { type: Number, required: true },
-  status:    { type: String, enum: ['pending_payment', 'confirmed', 'cancelled'], default: 'pending_payment' },
-  payment:   { type: paymentSchema, required: true },
-  notes:     { type: String, default: '' },
+  doctorId:    { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', required: true, index: true },
+  patientId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
+  dateISO:     { type: String, required: true },
+  slotStartUTC:{ type: String, required: true },
+  slotEndUTC:  { type: String, required: true },
+  timezone:    { type: String, default: 'Asia/Jerusalem' },
+  notes:       { type: String, default: '' },
+  status:      { type: String, enum: ['created','paid','confirmed','canceled'], default: 'created' },
+  payment:     { type: paymentSchema, required: true },
 }, { timestamps: true });
+
+appointmentSchema.index({ doctorId:1, slotStartUTC:1 }, { unique:true });
 
 module.exports = mongoose.model('Appointment', appointmentSchema);

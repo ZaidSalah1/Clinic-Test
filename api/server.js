@@ -8,8 +8,16 @@ const path = require("path");
 const app = express();
 
 const Doctor = require("./models/Doctor.js");
-const Appointment = require("./models/Appointment.js");
 const Specialty = require("./models/specialty");
+
+// const fetch = require('node-fetch');
+const crypto = require('crypto');
+
+const Patient = require('./models/Patient');
+const Appointment = require('./models/Appointment');
+
+const LAHZA_SECRET = process.env.LAHZA_SECRET;
+const CALLBACK_URL = process.env.LAHZA_CALLBACK_URL; // استخدم رابط ngrok
 
 const { DateTime } = require('luxon');
 
@@ -22,6 +30,162 @@ app.use(express.json());
 app.get("/", (_req, res) => res.json({ ok: true }));
 const UPLOADS_DIR = path.resolve(__dirname, "../uploads"); // <-- المهم
 app.use("/uploads", express.static(UPLOADS_DIR));
+
+
+app.post('/appointments/init', async (req, res) => {
+  try {
+    const { doctorId, patientId, patient, dateISO, slotStartUTC, slotEndUTC } = req.body;
+
+    // 1) احضر الدكتور
+    const doctor = await Doctor.findById(doctorId).lean();
+    if (!doctor) return res.status(400).json({ error: 'Doctor not found' });
+
+    // 2) حضّر/أنشئ المريض (upsert)
+    let pid = patientId;
+    if (!pid) {
+      if (!patient?.phone) return res.status(400).json({ error: 'phone is required' });
+
+      let existing = await Patient.findOne({
+        $or: [
+          ...(patient.email ? [{ email: patient.email.toLowerCase() }] : []),
+          { phone: patient.phone }
+        ]
+      });
+
+      if (!existing) {
+        existing = await Patient.create({
+          firstName: patient.firstName || 'Guest',
+          lastName:  patient.lastName  || 'User',
+          email:     (patient.email || `${patient.phone}@guest.local`).toLowerCase(),
+          phone:     patient.phone,
+          gender:    patient.gender,
+          dob:       patient.dob
+        });
+      }
+      pid = existing._id;
+    }
+
+    // 3) حساب المبلغ بالأغورات (ILS * 100)
+    const amount_agorot = Math.round((doctor.price || 0) * 100);
+
+    // 4) إنشاء الحجز pending
+    const appt = await Appointment.create({
+      doctorId,
+      patientId: pid,
+      dateISO,
+      slotStartUTC,
+      slotEndUTC,
+      payment: { currency: 'ILS', amount_agorot, callbackUrl: CALLBACK_URL, status: 'pending' }
+    });
+
+    // 5) تهيئة الدفع مع Lahza
+    const pat = await Patient.findById(pid).lean();
+    const initRes = await fetch('https://api.lahza.io/transaction/initialize', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${LAHZA_SECRET}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        amount: String(amount_agorot),
+        currency: 'ILS',
+        email: pat?.email,
+        mobile: pat?.phone,
+        callback_url: CALLBACK_URL,
+        reference: `APPT_${appt._id}`,
+        metadata: JSON.stringify({ appointmentId: String(appt._id), doctorId, patientId: String(pid) })
+      })
+    }).then(r => r.json());
+
+    if (!initRes?.status) {
+      await Appointment.findByIdAndDelete(appt._id);
+      return res.status(400).json({ error: initRes?.message || 'Lahza init failed' });
+    }
+
+    await Appointment.findByIdAndUpdate(appt._id, {
+      $set: {
+        'payment.authorizationUrl': initRes.data.authorization_url,
+        'payment.reference': initRes.data.reference
+      }
+    });
+
+    res.json({ appointmentId: appt._id, patientId: pid, authorizationUrl: initRes.data.authorization_url });
+  } catch (e) {
+    console.error('INIT_ERR', e);
+    res.status(500).json({ error: e.message || 'Server error' });
+  }
+});
+
+
+app.get('/payments/lahza/verify', async (req, res) => {
+  try {
+    const { reference } = req.query;
+    if (!reference) return res.status(400).json({ error: 'Missing reference' });
+
+    const out = await fetch(`https://api.lahza.io/transaction/verify/${reference}`, {
+      headers: { Authorization: `Bearer ${LAHZA_SECRET}` }
+    }).then(r => r.json());
+
+    if (!out?.status) return res.status(400).json({ error: out?.message || 'verify failed' });
+
+    const appt = await Appointment.findOne({ 'payment.reference': reference });
+    if (appt) {
+      await Appointment.updateOne(
+        { _id: appt._id },
+        {
+          $set: {
+            'payment.status': out.data.status === 'success' ? 'success' : 'failed',
+            'payment.channel': out.data.channel,
+            'payment.gatewayResponse': out.data.gateway_response,
+            'payment.rawVerify': out.data,
+            status: out.data.status === 'success' ? 'paid' : appt.status
+          }
+        }
+      );
+    }
+
+    res.json({ ok: true, data: out.data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+app.post('/webhooks/lahza', express.raw({ type: '*/*' }), async (req, res) => {
+  try {
+    const signature = req.header('x-lahza-signature') || '';
+    const payload = req.body; // Buffer
+    const digest  = crypto.createHmac('sha256', LAHZA_SECRET).update(payload).digest('hex');
+    if (digest !== signature) return res.sendStatus(200); // تجاهل لو التوقيع غلط
+
+    const event = JSON.parse(payload.toString('utf8'));
+    const ref = event?.data?.reference;
+    if (!ref) return res.sendStatus(200);
+
+    const appt = await Appointment.findOne({ 'payment.reference': ref });
+    if (!appt) return res.sendStatus(200);
+
+    const status = event?.type === 'charge.success' ? 'success' : 'failed';
+
+    await Appointment.updateOne(
+      { _id: appt._id },
+      {
+        $set: {
+          'payment.status': status,
+          'payment.channel': event?.data?.channel,
+          'payment.gatewayResponse': event?.data?.gateway_response,
+          'payment.rawWebhook': event,
+          ...(status === 'success' ? { status: 'paid' } : {})
+        }
+      }
+    );
+
+    res.sendStatus(200);
+  } catch (e) {
+    console.error('WEBHOOK_ERR', e);
+    res.sendStatus(200);
+  }
+});
 
 
 

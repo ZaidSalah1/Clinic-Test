@@ -1,5 +1,5 @@
 // src/screens/BookingScreen.tsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Modal,
 } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -15,19 +16,25 @@ import type { RouteProp } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { HOST } from './constants';
 import type { RootStackParamList } from './App';
-import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
+import { Linking } from 'react-native';
 
 type BookingRoute = RouteProp<RootStackParamList, 'Booking'>;
 
 const BRAND = '#1D90AF';
 const CTA = '#3AC0D9';
 const CARD_BG = '#E9F6FA';
+const CALLBACK_URL =
+  'https://531a3ea0e05a.ngrok-free.app/payments/lahza/callback';
 
 type Slot = { label: string; utc: string };
 
 export default function BookingScreen() {
   const insets = useSafeAreaInsets();
-
   const { params } = useRoute<BookingRoute>();
   const navigation = useNavigation();
   const doctorId = params?.doctorId as string;
@@ -37,6 +44,11 @@ export default function BookingScreen() {
   const [slots, setSlots] = useState<Slot[]>([]);
   const [loading, setLoading] = useState(false);
   const [picked, setPicked] = useState<Slot | null>(null);
+
+  // NEW: للدفع + شاشة نجاح
+  const [payUrl, setPayUrl] = useState<string | null>(null);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const webHandledRef = useRef(false); // يمنع التكرار
 
   const markedDates = useMemo(
     () => ({ [selectedDate]: { selected: true, selectedColor: CTA } }),
@@ -66,11 +78,72 @@ export default function BookingScreen() {
     if (doctorId) loadSlots(selectedDate);
   }, [doctorId]);
 
-  function onNext() {
-    if (!picked) return;
-    // هنا لاحقًا اعمل POST /appointments أو روح لصفحة تأكيد
-    Alert.alert('Selected slot', `${selectedDate} • ${picked.label}`);
+  function addMinutesToISO(isoUtc: string, mins: number) {
+    const d = new Date(isoUtc);
+    d.setUTCMinutes(d.getUTCMinutes() + mins);
+    return d.toISOString();
   }
+
+  async function onNext() {
+    if (!picked) return;
+    try {
+      const res = await fetch(`${HOST}/appointments/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          doctorId,
+          dateISO: selectedDate,
+          slotStartUTC: picked.utc,
+          slotEndUTC: addMinutesToISO(picked.utc, 30), // 👈 أضف هذه
+          patient: {
+            firstName: 'Guest',
+            lastName: 'User',
+            phone: '0599XXXXXX',
+            email: 'guest@example.com',
+          },
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Init failed');
+
+      webHandledRef.current = false;
+      setPayUrl(json.authorizationUrl);
+    } catch (e: any) {
+      Alert.alert('Payment Init Error', e.message);
+    }
+  }
+
+  // اعتراض الرجوع من الدفع
+  const handleNavChange = async (navState: any) => {
+    const url: string | undefined = navState?.url;
+    if (!url || webHandledRef.current) return;
+
+    // التحقق من الـ callback أو صفحة الإغلاق
+    const isCallback = url.startsWith(CALLBACK_URL);
+    const isClose = url === 'https://api.lahza.io/close';
+
+    if (isCallback || isClose) {
+      webHandledRef.current = true; // امنع التكرار
+      try {
+        // حاول تجيب reference من الكولباك (إن وُجد)
+        let ref: string | null = null;
+        try {
+          const q = new URL(url).searchParams;
+          ref = q.get('reference');
+        } catch {}
+
+        if (ref) {
+          await fetch(`${HOST}/payments/lahza/verify?reference=${ref}`);
+        }
+      } catch (_) {
+        // تجاهل أخطاء التحقق المؤقتة
+      } finally {
+        setPayUrl(null); // أغلق WebView
+        setShowSuccess(true); // أعرض نجاح
+      }
+    }
+  };
 
   return (
     <SafeAreaProvider>
@@ -107,10 +180,8 @@ export default function BookingScreen() {
         <ScrollView
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
         >
-          {/* Title */}
           <Text style={styles.sectionTitle}>Choose working hours</Text>
 
-          {/* Slots */}
           {loading ? (
             <View style={styles.center}>
               <ActivityIndicator color={BRAND} />
@@ -154,6 +225,102 @@ export default function BookingScreen() {
           <Text style={styles.nextText}>Next</Text>
         </Pressable>
       </View>
+
+      {/* WebView للدفع - طبقة فوق */}
+      {payUrl && (
+        <View style={styles.webviewWrap}>
+          <View style={styles.webHeader}>
+            <Pressable
+              onPress={() => setPayUrl(null)}
+              style={styles.dismissBtn}
+            >
+              <Ionicons name="close" size={22} color="#333" />
+            </Pressable>
+            <Text style={styles.webTitle}>Secure Payment</Text>
+            <View style={{ width: 22 }} />
+          </View>
+          <WebView
+            source={{ uri: payUrl }}
+            startInLoadingState
+            javaScriptEnabled
+            domStorageEnabled
+            originWhitelist={['*']}
+            setSupportMultipleWindows={false} // يمنع فتح نافذة/تبويب خارجي
+            onShouldStartLoadWithRequest={req => {
+              const url = req.url;
+
+              // 1) لما نرجع من لَحْظة نغلق الويب فيو ونظهر النجاح داخل التطبيق
+              if (
+                url.startsWith(CALLBACK_URL) ||
+                url === 'https://api.lahza.io/close'
+              ) {
+                (async () => {
+                  try {
+                    // استخرج reference لو موجود وتحقق
+                    const ref = new URL(url).searchParams.get('reference');
+                    if (ref)
+                      await fetch(
+                        `${HOST}/payments/lahza/verify?reference=${ref}`,
+                      );
+                  } catch {}
+                  setPayUrl(null);
+                  setShowSuccess(true);
+                })();
+                return false; // لا تفتح الرابط (لا داخل الويب فيو ولا خارجه)
+              }
+
+              // 2) لو الرابط intent/tel/mailto أو أي scheme خاص، افتحه خارجيًا بإرادتنا
+              if (
+                url.startsWith('intent://') ||
+                url.startsWith('tel:') ||
+                url.startsWith('mailto:')
+              ) {
+                Linking.openURL(url).catch(() => {});
+                return false;
+              }
+
+              // 3) امنع about:blank (بعض مزوّدي الدفع بيفتحوها كنوافذ وسيطة)
+              if (url === 'about:blank') return false;
+
+              // 4) كل شيء آخر يظل داخل نفس WebView
+              return true;
+            }}
+            // اختياري: لو حابب تراقب تغيّرات العناوين (مش ضروري الآن)
+            // onNavigationStateChange={handleNavChange}
+
+            style={{ flex: 1 }}
+          />
+        </View>
+      )}
+
+      {/* Modal نجاح بسيط بدل SuccessScreen */}
+      <Modal
+        visible={showSuccess}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSuccess(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Ionicons name="checkmark-circle" size={56} color="#22C55E" />
+            <Text style={styles.modalTitle}>تم الحجز بنجاح</Text>
+            <Text style={styles.modalText}>
+              سنرسل لك تفاصيل الموعد على رقمك/إيميلك.
+            </Text>
+            <Pressable
+              onPress={() => {
+                setShowSuccess(false);
+                // ارجع للشاشة السابقة أو روح لصفحة المواعيد
+                // navigation.navigate('Appointments'); // لو عندك شاشة مواعيد
+                navigation.goBack();
+              }}
+              style={styles.modalBtn}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800' }}>تمّ</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaProvider>
   );
 }
@@ -198,22 +365,14 @@ const styles = StyleSheet.create({
     marginTop: 14,
     marginBottom: 8,
   },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10, // React Native 0.71+ يدعم gap
-  },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   slotBtn: {
     backgroundColor: BRAND,
     borderRadius: 10,
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
-  slotPicked: {
-    backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: BRAND,
-  },
+  slotPicked: { backgroundColor: '#fff', borderWidth: 2, borderColor: BRAND },
   slotText: { color: '#fff', fontWeight: '800' },
   slotTextPicked: { color: BRAND },
   nextBtn: {
@@ -239,5 +398,60 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 20,
+  },
+
+  // WebView overlay
+  webviewWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#fff',
+  },
+  webHeader: {
+    height: 48,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: '#eee',
+  },
+  dismissBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  webTitle: { fontWeight: '800', color: '#333' },
+
+  // Success modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCard: {
+    width: '80%',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 18,
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  modalText: { color: '#333', textAlign: 'center', marginBottom: 12 },
+  modalBtn: {
+    backgroundColor: CTA,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 10,
   },
 });
